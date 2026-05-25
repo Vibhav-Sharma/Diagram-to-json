@@ -9,6 +9,8 @@ from google import genai
 from google.genai import types
 
 from schema import DiagramAnalysis
+from prompts import DIAGRAM_EXTRACTION_PROMPT
+from localization import localize_structures
 
 load_dotenv()
 
@@ -34,40 +36,26 @@ except Exception as e:
 @app.post("/analyze")
 async def analyze_diagram(file: UploadFile = File(...)):
     if not client:
-        raise HTTPException(status_code=500, detail="Gemini API Key is missing or invalid. Set GEMINI_API_KEY environment variable.")
+        raise HTTPException(status_code=500, detail="Gemini API Key is missing or invalid.")
 
     media_type = file.content_type
     if media_type == "image/jpg":
         media_type = "image/jpeg"
     if media_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}. Use JPEG, PNG, or WebP.")
+        raise HTTPException(status_code=400, detail=f"Unsupported file type.")
 
     image_bytes = await file.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    pil_image = Image.open(io.BytesIO(image_bytes))
-
-    prompt = """
-You are an expert multimodal diagram understanding system.
-Analyze the provided hand-drawn educational diagram and decompose it into semantic components.
-
-Identify the overall diagram type and provide a summary.
-Extract the main "structures" (the core geometric or conceptual components, like a cell body, a heart outline, a flowchart node, etc.).
-For each structure, you must provide its bounding box `box_2d` in the format [ymin, xmin, ymax, xmax] scaled to 0-1000.
-
-Also extract:
-- labels: standalone text pointing to something.
-- annotations: explanatory text or sentences describing parts of the diagram.
-- connectors: arrows or lines that link structures together.
-    """
+    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
                 pil_image,
-                prompt
+                DIAGRAM_EXTRACTION_PROMPT
             ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -81,48 +69,82 @@ Also extract:
     if not response.text:
         raise HTTPException(status_code=500, detail="Empty response from Gemini")
 
-    # The response is JSON conforming to DiagramAnalysis schema
-    parsed_json = response.text
-
     import json
     try:
-        diagram_data = json.loads(parsed_json)
+        diagram_data = json.loads(response.text)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to parse JSON from Gemini")
 
+    # Step 2: Localization via GroundingDINO
+    structure_names = [s.get("name") for s in diagram_data.get("structures", []) if s.get("name")]
+    
+    print(f"Localizing structures: {structure_names}")
+    try:
+        bounding_boxes = localize_structures(pil_image, structure_names)
+    except Exception as e:
+        print(f"Localization failed: {e}")
+        bounding_boxes = {}
+
     # Generate Visualization Overlay
     vis_image = pil_image.copy().convert("RGBA")
-    draw = ImageDraw.Draw(vis_image, "RGBA")
-    width, height = vis_image.size
+    overlay = Image.new('RGBA', vis_image.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    
+    colors = [
+        (255, 99, 132),  # Red/Pink
+        (54, 162, 235),  # Blue
+        (255, 206, 86),  # Yellow
+        (75, 192, 192),  # Teal
+        (153, 102, 255), # Purple
+        (255, 159, 64)   # Orange
+    ]
 
-    for struct in diagram_data.get("structures", []):
-        box_2d = struct.get("box_2d")
-        if box_2d and len(box_2d) == 4:
-            ymin, xmin, ymax, xmax = box_2d
+    for idx, struct in enumerate(diagram_data.get("structures", [])):
+        struct_name = struct.get("name")
+        if struct_name in bounding_boxes:
+            xmin, ymin, xmax, ymax = bounding_boxes[struct_name]
             
-            # Scale coordinates from 0-1000 to image dimensions
-            y1 = (ymin / 1000) * height
-            x1 = (xmin / 1000) * width
-            y2 = (ymax / 1000) * height
-            x2 = (xmax / 1000) * width
+            # Save the box back to the json so the frontend can use it if desired
+            # Format: [ymin, xmin, ymax, xmax] normalized to 0-1000 to match old format
+            width, height = vis_image.size
+            struct["box_2d"] = [
+                int((ymin / height) * 1000),
+                int((xmin / width) * 1000),
+                int((ymax / height) * 1000),
+                int((xmax / width) * 1000)
+            ]
 
-            # Draw semi-transparent fill and border
-            draw.rectangle([x1, y1, x2, y2], fill=(0, 255, 0, 40), outline=(0, 255, 0, 255), width=3)
+            # Choose a color
+            r, g, b = colors[idx % len(colors)]
             
-            # Draw label
-            struct_name = struct.get("name", "")
-            draw.text((x1 + 5, y1 + 5), struct_name, fill=(0, 255, 0, 255))
+            # Draw beautiful translucent mask
+            # Low opacity fill, solid thin border
+            fill_color = (r, g, b, 70)  # 70/255 opacity
+            outline_color = (r, g, b, 200)
+            
+            # Use a slightly rounded rectangle if possible (Pillow 8.2+ supports rounded_rectangle)
+            draw.rounded_rectangle(
+                [xmin, ymin, xmax, ymax], 
+                radius=8, 
+                fill=fill_color, 
+                outline=outline_color, 
+                width=2
+            )
+            # Labels will be rendered by the frontend using the box_2d coordinates.
 
     # Convert visualization to base64
+    # Instead of compositing, we return ONLY the transparent overlay.
+    # This allows the frontend to absolutely position it over the original image and adjust opacity via CSS.
     buffered = io.BytesIO()
-    vis_image.convert("RGB").save(buffered, format="JPEG", quality=85)
+    overlay.save(buffered, format="PNG")
     vis_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
     
     return {
         "diagram_json": diagram_data,
-        "visualization_image": f"data:image/jpeg;base64,{vis_base64}"
+        "visualization_image": f"data:image/png;base64,{vis_base64}"
     }
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+

@@ -5,7 +5,6 @@ class Structure(BaseModel):
     name: str = Field(description="Name of the detected structure (e.g. cell body, heart outline).")
     description: str = Field(description="Brief description of the structure.")
     confidence: float = Field(description="Confidence score between 0.0 and 1.0.")
-    box_2d: list[int] = Field(description="Bounding box coordinates [ymin, xmin, ymax, xmax] scaled to 0-1000 for this structure. Must contain exactly 4 integers.")
 
 class Label(BaseModel):
     text: str = Field(description="Extracted text of the label.")
@@ -22,7 +21,27 @@ class Connector(BaseModel):
     to_element: str = Field(alias="to", description="Destination element of the connector.")
     type: str = Field(description="Type of connector, e.g. arrow or line.")
 
+class RubricScore(BaseModel):
+    score: int = Field(description="Score awarded")
+    max: int = Field(description="Maximum possible score")
+    feedback: List[str] = Field(description="Feedback explaining the score and any deductions")
+
+class RubricScores(BaseModel):
+    figure_structure: RubricScore
+    labels: RubricScore
+    connectors: RubricScore
+    annotations: RubricScore
+
+class Evaluation(BaseModel):
+    total_score: int
+    max_score: int
+    rubric_scores: RubricScores
+    overall_feedback: List[str]
+    confidence: str = Field(description="Confidence level: high/medium/low")
+
 class DiagramAnalysis(BaseModel):
+    detected_figure: str = Field(description="Name of the detected figure being evaluated.")
+    evaluation: Evaluation = Field(description="Educational evaluation of the diagram.")
     diagram_type: str = Field(description="Type of the diagram.")
     diagram_summary: str = Field(description="Overall summary of what the diagram represents.")
     structures: List[Structure] = Field(default_factory=list, description="Main structures/regions of the diagram.")
