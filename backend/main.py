@@ -185,8 +185,10 @@ async def evaluate_answer(
             theory_eval_data = evaluate_theory(client, question, student_text, max_marks=max_marks)
             pipeline_result["evaluation"]["theory"] = theory_eval_data
         except Exception as e:
-            print(f"[Pipeline] Theory evaluation failed: {e}")
-            pipeline_result["evaluation"]["theory"] = {"error": str(e)}
+            print(f"[Pipeline] Theory evaluation failed after retries: {e}")
+            from pipeline.retry import make_eval_failure
+            theory_eval_data = make_eval_failure("gemini_service_error", e)
+            pipeline_result["evaluation"]["theory"] = theory_eval_data
     else:
         print("[Pipeline] Step 5: Skipped — no theory text extracted")
         theory_eval_data = {
@@ -196,7 +198,8 @@ async def evaluate_answer(
             "strengths": [],
             "weaknesses": ["No theory text was detected in the answer."],
             "overall_feedback": "No written answer was detected on the page.",
-            "confidence": "low"
+            "confidence": "low",
+            "status": "success"
         }
         pipeline_result["evaluation"]["theory"] = theory_eval_data
 
@@ -261,19 +264,28 @@ async def evaluate_answer(
     # ── Step 7: Score Fusion ───────────────────────────────────
     print("[Pipeline] Step 7: Score fusion...")
     
-    theory_score = theory_eval_data.get("score", 0) if theory_eval_data else 0
-    bonus = diagram_bonus_data.get("bonus_awarded", 0) if diagram_bonus_data else 0
-    
-    fusion_data = combine_scores(
-        theory_score=theory_score,
-        max_theory=max_marks,
-        diagram_bonus=bonus,
-        max_bonus=2,
-        has_diagram=has_diagram
-    )
-    pipeline_result["evaluation"]["score_fusion"] = fusion_data
+    if theory_eval_data and theory_eval_data.get("status") == "evaluation_failed":
+        print("[Pipeline] Step 7: Skipping score fusion due to theory evaluation failure")
+        fusion_data = {
+            "status": "evaluation_failed",
+            "summary": "Final score cannot be calculated because theory evaluation failed due to a service error.",
+            "final_score": None,
+            "max_possible": max_marks + 2
+        }
+    else:
+        theory_score = theory_eval_data.get("score", 0) if theory_eval_data else 0
+        bonus = diagram_bonus_data.get("bonus_awarded", 0) if diagram_bonus_data else 0
+        
+        fusion_data = combine_scores(
+            theory_score=theory_score,
+            max_theory=max_marks,
+            diagram_bonus=bonus,
+            max_bonus=2,
+            has_diagram=has_diagram
+        )
+        print(f"[Pipeline] ✅ Complete — {fusion_data['summary']}")
 
-    print(f"[Pipeline] ✅ Complete — {fusion_data['summary']}")
+    pipeline_result["evaluation"]["score_fusion"] = fusion_data
     
     return pipeline_result
 

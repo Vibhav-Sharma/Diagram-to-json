@@ -54,6 +54,23 @@ export default function ResultsPanel({ result }) {
         );
 
       case 'evaluation':
+        if (theoryEval?.status === 'evaluation_failed') {
+          return (
+            <div className="results-evaluation">
+              <div className="error-banner" style={{ margin: '20px 0', padding: '20px' }}>
+                <AlertTriangle size={24} />
+                <div>
+                  <h4 style={{ marginBottom: '8px', color: 'var(--accent-red)' }}>Evaluation Temporarily Unavailable</h4>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    The AI grading service is currently overloaded or unavailable (Error: {theoryEval.reason}).<br/>
+                    Please try evaluating again in a few moments.
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        }
+        
         return (
           <div className="results-evaluation">
             {/* Theory Evaluation */}
@@ -135,6 +152,17 @@ export default function ResultsPanel({ result }) {
         );
 
       case 'score':
+        if (scoreFusion?.status === 'evaluation_failed') {
+           return (
+            <div className="results-score">
+              <div className="error-banner" style={{ margin: '20px 0', padding: '20px', width: '100%', justifyContent: 'center' }}>
+                <AlertTriangle size={20} />
+                <span>Score calculation pending retry.</span>
+              </div>
+            </div>
+           );
+        }
+        
         return scoreFusion ? (
           <div className="results-score">
             <ScoreGauge

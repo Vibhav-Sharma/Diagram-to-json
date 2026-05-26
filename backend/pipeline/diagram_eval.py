@@ -12,8 +12,10 @@ from google.genai import types
 
 from schema import DiagramAnalysis, DiagramBonus
 from prompts import DIAGRAM_EXTRACTION_PROMPT, DIAGRAM_BONUS_PROMPT
+from pipeline.retry import gemini_retry
 
 
+@gemini_retry
 def evaluate_diagram(client, question: str, diagram_image: Image.Image) -> dict:
     """
     Perform semantic decomposition and evaluation of a diagram.
@@ -30,7 +32,7 @@ def evaluate_diagram(client, question: str, diagram_image: Image.Image) -> dict:
     context = f"The student is answering: {question}\n\n"
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash", # Upgraded
         contents=[
             diagram_image,
             context + DIAGRAM_EXTRACTION_PROMPT
@@ -48,6 +50,7 @@ def evaluate_diagram(client, question: str, diagram_image: Image.Image) -> dict:
     return json.loads(response.text)
 
 
+@gemini_retry
 def calculate_diagram_bonus(client, question: str, diagram_image: Image.Image) -> dict:
     """
     Calculate bonus marks for including a diagram.
@@ -64,7 +67,7 @@ def calculate_diagram_bonus(client, question: str, diagram_image: Image.Image) -
     filled_prompt = DIAGRAM_BONUS_PROMPT.format(question=question)
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash", # Upgraded
         contents=[
             diagram_image,
             filled_prompt

@@ -11,8 +11,10 @@ from google.genai import types
 
 from schema import OCRResult, ExtractedQuestion
 from prompts import OCR_EXTRACTION_PROMPT, QUESTION_EXTRACTION_PROMPT
+from pipeline.retry import gemini_retry
 
 
+@gemini_retry
 def extract_text(client, image: Image.Image) -> dict:
     """
     Extract handwritten text from a cropped theory-text region.
@@ -25,7 +27,7 @@ def extract_text(client, image: Image.Image) -> dict:
         dict: Parsed OCRResult data with theory_text and diagram_labels
     """
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash", # Upgraded
         contents=[
             image,
             OCR_EXTRACTION_PROMPT
@@ -43,6 +45,7 @@ def extract_text(client, image: Image.Image) -> dict:
     return json.loads(response.text)
 
 
+@gemini_retry
 def extract_question(client, image: Image.Image) -> dict:
     """
     Extract question text from the answer sheet image.
@@ -55,7 +58,7 @@ def extract_question(client, image: Image.Image) -> dict:
         dict: Parsed ExtractedQuestion data
     """
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash", # Upgraded
         contents=[
             image,
             QUESTION_EXTRACTION_PROMPT

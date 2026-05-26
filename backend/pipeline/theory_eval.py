@@ -10,6 +10,7 @@ from google.genai import types
 
 from schema import TheoryEvaluation
 from prompts import THEORY_EVALUATION_PROMPT
+from pipeline.retry import gemini_retry
 
 
 # Default mark distribution for theory evaluation (out of 10)
@@ -20,6 +21,7 @@ DEFAULT_ACCURACY_MARKS = 2
 DEFAULT_CLARITY_MARKS = 1
 
 
+@gemini_retry
 def evaluate_theory(client, question: str, student_text: str, max_marks: int = DEFAULT_MAX_MARKS) -> dict:
     """
     Evaluate a student's theory answer text against the question.
@@ -58,7 +60,7 @@ STUDENT'S ANSWER (extracted via OCR from handwritten text):
 """
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash", # Upgraded for stability
         contents=[
             filled_prompt,
             evaluation_input
