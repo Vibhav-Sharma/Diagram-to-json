@@ -67,21 +67,27 @@ class PageRegion(BaseModel):
     confidence: float = Field(description="Confidence score between 0.0 and 1.0")
     description: Optional[str] = Field(default=None, description="Brief description of what is in this region")
 
-class PageSegmentation(BaseModel):
-    """Result of page-level layout analysis."""
-    regions: List[PageRegion] = Field(description="All detected regions on the page")
+# --- Semantic Extraction ---
+
+class DiagramJSON(BaseModel):
+    """Semantic JSON representation of the diagram."""
+    figure: str = Field(description="Name of the detected figure being evaluated.")
+    labels: List[str] = Field(default_factory=list, description="Extracted labels in the diagram.")
+    relationships: List[str] = Field(default_factory=list, description="Semantic relationships between structures.")
+    connectors: List[str] = Field(default_factory=list, description="Connectors such as arrows or lines linking components.")
+
+class FullExtractionResult(BaseModel):
+    """Result of a single semantic extraction call on the full page image."""
+    question_text: str = Field(description="The extracted question text, if visible.")
+    theory_text: str = Field(description="Extracted theory/explanatory answer text from the student.")
+    diagram_regions: List[PageRegion] = Field(default_factory=list, description="Detected diagram regions on the page.")
+    diagram_labels: List[str] = Field(default_factory=list, description="Extracted diagram label texts.")
+    annotations: List[str] = Field(default_factory=list, description="Explanatory annotations found near the diagram.")
+    connectors: List[str] = Field(default_factory=list, description="Connectors such as arrows or lines drawn on the page.")
+    diagram_json: DiagramJSON = Field(description="Semantic structure of the diagram.")
     has_diagram: bool = Field(description="Whether a diagram was detected on the page")
     has_theory_text: bool = Field(description="Whether theory/explanatory text was detected on the page")
     page_summary: str = Field(description="Brief summary of the page content and layout")
-
-
-# --- OCR Extraction ---
-
-class OCRResult(BaseModel):
-    """Result of OCR text extraction."""
-    theory_text: str = Field(description="Extracted theory/explanatory answer text from the student")
-    diagram_labels: List[str] = Field(default_factory=list, description="Extracted diagram label texts, separate from theory text")
-
 
 # --- Theory Evaluation ---
 
@@ -124,11 +130,3 @@ class ScoreFusion(BaseModel):
     final_score: int = Field(description="Final combined score = theory_score + diagram_bonus")
     max_possible: int = Field(description="Maximum possible score = max_theory + max_bonus")
     summary: str = Field(description="Human-readable score summary")
-
-
-# --- Question Extraction ---
-
-class ExtractedQuestion(BaseModel):
-    """Question text extracted from the answer sheet image."""
-    question_text: str = Field(description="The extracted question text")
-    confidence: float = Field(description="Confidence in the extraction, 0.0-1.0")

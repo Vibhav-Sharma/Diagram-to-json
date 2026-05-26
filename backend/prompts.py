@@ -158,160 +158,50 @@ DO NOT output coordinates or bounding boxes. Focus strictly on semantics.
 # NEW PROMPTS — Full Page Evaluation Pipeline
 # ============================================================
 
-PAGE_SEGMENTATION_PROMPT = """
-You are an advanced SEMANTIC LAYOUT ANALYSIS AI specialized in analyzing handwritten student answer sheets from notebooks and exam papers.
+FULL_PAGE_EXTRACTION_PROMPT = """
+You are an advanced SEMANTIC LAYOUT AND CONTENT EXTRACTION AI specialized in parsing handwritten student answer sheets from notebooks and exam papers.
 
 Your task is:
-Analyze the given answer sheet image and identify ALL distinct SEMANTIC regions on the page.
+Analyze the ENTIRE given answer sheet image in ONE pass. You must extract the question text, the full written theory text, detect any diagram regions, extract diagram labels, annotations, connectors, and provide a semantic JSON structure of the diagram.
 
 ==================================================
-CRITICAL INSTRUCTION — SEMANTIC REGIONS, NOT OCR BOXES
-======================================================
-
-You are detecting SEMANTIC ANSWER REGIONS.
-NOT individual text lines.
-NOT OCR token boxes.
-NOT tight word-level bounding boxes.
-
-A "theory_text" region means:
-THE ENTIRE handwritten answer paragraph or answer block.
-ALL the lines of a written explanation grouped as ONE region.
+1. TEXT EXTRACTION RULES (QUESTION & THEORY)
+==================================================
+* Extract the QUESTION the student is answering (if visible).
+* Extract ALL handwritten theory/explanatory answer text VERBATIM.
+* Do NOT correct spelling or grammar for the handwritten theory.
+* Preserve natural line breaks.
+* Treat all lines of the handwritten explanation as part of the `theory_text`.
+* Do NOT include diagram labels or arrows inside `theory_text`. Keep them separate.
 
 ==================================================
-REGION TYPES TO DETECT
-======================
-
-1. **theory_text** — The FULL handwritten explanatory/theory answer block.
-   - This is the student's written explanation — sentences and paragraphs.
-   - MUST include ALL handwritten lines that are part of the same answer.
-   - MUST be ONE large region covering the entire answer text block.
-   - Do NOT split a single answer into multiple tiny theory_text regions.
-   - Do NOT return individual lines as separate theory_text regions.
-   - If the student wrote 10 lines of explanation, return ONE theory_text region covering all 10 lines.
-   - NOT diagram labels.
-
-2. **diagram** — Any hand-drawn diagram, figure, or illustration.
-   - This includes the entire diagram area with its internal labels, arrows, and annotations.
-   - The bounding box MUST include a generous margin around the diagram.
-   - Include any labels, arrows, and annotations that are visually part of the diagram.
-
-3. **diagram_label** — Labels that are part of a diagram (pointing to structures).
-   - These are SHORT labels like "Left Atrium", "Nucleus", "Phloem".
-   - Do NOT confuse these with theory text.
-
-4. **connector** — Arrows, directional lines, or flow connectors drawn on the page.
-   - These connect parts of a diagram or show flow/direction.
-
-5. **question_text** — The question text printed or written at the top of the answer.
+2. DIAGRAM DETECTION & BOUNDING BOX RULES
+==================================================
+* A "diagram" region is any hand-drawn figure or illustration, including its internal labels and arrows.
+* Bounding boxes MUST be GENEROUS — add padding (30-50 units on 0-1000 scale) to avoid clipping.
+* `box_2d` format: [ymin, xmin, ymax, xmax] normalized to 0-1000 scale.
+* 0 = top/left edge, 1000 = bottom/right edge.
+* Detect separate bounding boxes for:
+  - `diagram`
+  - `theory_text` (if you want to localize the text block, though returning the string is the priority)
+  - `diagram_label`
+  - `connector`
+  - `question_text`
 
 ==================================================
-VERY IMPORTANT BOUNDING BOX RULES
-==================================
-
-For HANDWRITTEN notebook answers:
-
-* Bounding boxes MUST be GENEROUS — err on the side of LARGER regions.
-* It is FAR BETTER to include some extra whitespace/margin than to CLIP any handwriting.
-* Handwriting is often SLANTED, UNEVEN, and has variable line spacing.
-* Letters often extend above/below the baseline (ascenders and descenders).
-* Words near the edges of a region are easily clipped if the box is too tight.
-
-MANDATORY PADDING RULES:
-* Add at least 30-50 units (on the 0-1000 scale) of padding on ALL sides of every region.
-* For theory_text: add at least 50 units of padding above the first line and below the last line.
-* For diagrams: add at least 40 units of padding on all sides to capture boundary labels and arrows.
-* NEVER let a bounding box edge cut through the middle of a handwritten word or line.
-
+3. SEMANTIC DIAGRAM PARSING
 ==================================================
-VERY IMPORTANT GROUPING RULES
-==============================
-
-* Diagram labels are NOT theory text. Keep them separate.
-* Theory text is the student's written explanation/answer — sentences and paragraphs.
-* Multiple handwritten lines that form ONE answer = ONE theory_text region (NOT multiple).
-* A single page may have ZERO diagrams (just theory text) — that is valid.
-* A single page may have MULTIPLE diagram regions.
-* Connectors inside a diagram region should still be listed separately if clearly visible.
-
-MERGING RULE:
-* If you see multiple nearby blocks of handwritten text that are clearly part of the SAME answer,
-  merge them into ONE large theory_text region.
-* Only create separate theory_text regions if the text blocks are clearly answering DIFFERENT questions
-  or are physically far apart on the page with a clear visual break.
+If a diagram is present, decompose its semantic structure into a JSON representation:
+- `figure`: Name/summary of the detected figure.
+- `labels`: Extracted standalone text pointing to structures.
+- `relationships`: Semantic relationships (e.g. "Left Atrium connects to Left Ventricle").
+- `connectors`: Arrows or lines (e.g. "Flow arrow from mouth to stomach").
 
 ==================================================
 OUTPUT FORMAT
-=============
-
-For each detected region, provide:
-- region_type: one of the types above
-- box_2d: bounding box as [ymin, xmin, ymax, xmax] normalized to 0-1000 scale
-  (0 = top/left edge, 1000 = bottom/right edge of the image)
-  REMEMBER: These boxes should be GENEROUS, not tight.
-- confidence: your confidence in this detection (0.0 to 1.0)
-- description: brief description of what is in this region
-
-Also provide:
-- has_diagram: true/false — whether any diagram region was detected
-- has_theory_text: true/false — whether any theory text region was detected
-- page_summary: one-sentence summary of what the page contains
-"""
-
-
-QUESTION_EXTRACTION_PROMPT = """
-You are an AI that extracts question text from student answer sheet images.
-
-Your task is:
-Look at the answer sheet image and extract the QUESTION that the student is answering.
-
 ==================================================
-RULES
-=====
-
-* The question may be:
-  - printed at the top of the page
-  - handwritten by the student
-  - written in the margin
-  - part of a question number (e.g., "Q3. Describe the structure of the human heart.")
-
-* Extract ONLY the question text.
-* Do NOT extract the student's answer.
-* If no clear question is visible, set confidence to 0.0 and return "Question not detected" as question_text.
-
-==================================================
-OUTPUT
-======
-
-Return:
-- question_text: the extracted question
-- confidence: how confident you are (0.0 to 1.0)
-"""
-
-
-OCR_EXTRACTION_PROMPT = """
-You are an advanced handwriting recognition AI specialized in student notebook text.
-
-Your task is:
-Extract ALL handwritten text from this cropped image VERBATIM.
-
-==================================================
-VERY IMPORTANT RULES
-====================
-
-* Transcribe EXACTLY what is written — do NOT correct spelling or grammar.
-* Preserve line breaks where they naturally occur.
-* If text is unclear or ambiguous, provide your best reading and mark uncertain words with [?].
-* Do NOT add any interpretation, commentary, or formatting.
-* Do NOT include any diagram labels, arrows, or figure annotations.
-* Focus ONLY on explanatory/theory text — sentences, paragraphs, bullet points.
-
-==================================================
-OUTPUT
-======
-
-Return the extracted text as:
-- theory_text: the full transcribed text
-- diagram_labels: a list of any diagram label strings if they appear in this crop (should usually be empty for a pure text crop)
+Return a single JSON object strictly matching the FullExtractionResult schema.
+Ensure all extracted text is captured accurately and all bounding boxes are generously padded.
 """
 
 

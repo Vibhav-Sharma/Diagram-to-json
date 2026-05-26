@@ -5,19 +5,14 @@ import base64
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw
-from google import genai
-from google.genai import types
+from PIL import Image
 
-from schema import DiagramAnalysis
-from prompts import DIAGRAM_EXTRACTION_PROMPT
-from localization import localize_structures
+from google import genai
 
 # Pipeline imports
-from pipeline.segmentation import segment_page, crop_region, merge_regions
-from pipeline.ocr import extract_text, extract_question
+from pipeline.extraction import extract_full_page
 from pipeline.theory_eval import evaluate_theory
-from pipeline.diagram_eval import evaluate_diagram, calculate_diagram_bonus
+from pipeline.diagram_eval import calculate_diagram_bonus
 from pipeline.score_fusion import combine_scores
 
 load_dotenv(override=True)
@@ -50,9 +45,26 @@ def image_to_base64(image: Image.Image, format: str = "PNG") -> str:
     mime = "image/png" if format == "PNG" else "image/jpeg"
     return f"data:{mime};base64,{encoded}"
 
+def crop_region_by_bbox(image: Image.Image, box_2d: list) -> Image.Image:
+    """Crop an image using a normalized [ymin, xmin, ymax, xmax] box (0-1000)."""
+    w, h = image.size
+    ymin, xmin, ymax, xmax = box_2d
+    # Convert from 0-1000 scale to absolute pixels
+    abs_xmin = int(xmin * w / 1000)
+    abs_ymin = int(ymin * h / 1000)
+    abs_xmax = int(xmax * w / 1000)
+    abs_ymax = int(ymax * h / 1000)
+    
+    # Ensure within bounds
+    abs_xmin = max(0, abs_xmin)
+    abs_ymin = max(0, abs_ymin)
+    abs_xmax = min(w, abs_xmax)
+    abs_ymax = min(h, abs_ymax)
+    
+    return image.crop((abs_xmin, abs_ymin, abs_xmax, abs_ymax))
 
 # ============================================================
-# NEW ENDPOINT — Full Page Subjective Answer Evaluation
+# ENDPOINT — Hybrid Semantic Full Page Evaluation
 # ============================================================
 
 @app.post("/evaluate")
@@ -63,16 +75,14 @@ async def evaluate_answer(
     max_marks: int = Form(default=10)
 ):
     """
-    Full-page subjective answer evaluation pipeline.
+    Hybrid Semantic Full-Page Evaluation Pipeline.
     
     Pipeline:
-    1. Page Segmentation (Gemini VLM) — detect regions
-    2. Crop regions from original image
-    3. OCR extraction on theory text crop
-    4. (Optional) Auto-extract question from image
-    5. Theory evaluation (Gemini LLM)
-    6. (If diagram present) Diagram evaluation + bonus calculation
-    7. Score fusion
+    1. Single Multimodal Extraction Call (or load from local Cache)
+    2. Local Cropping and Data Prep
+    3. (Optional) Text-based Theory Evaluation
+    4. (Optional) Text-based Diagram Bonus Evaluation
+    5. Score Fusion
     """
     if not client:
         raise HTTPException(status_code=500, detail="Gemini API Key is missing or invalid.")
@@ -89,13 +99,40 @@ async def evaluate_answer(
 
     pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     
-    # Track all pipeline results for explainability
+    # ── Step 1: ONE-PASS SEMANTIC EXTRACTION ──────────────────────────────
+    print("[Pipeline] Step 1: Full Page Semantic Extraction...")
+    try:
+        extraction_data = extract_full_page(client, pil_image)
+    except Exception as e:
+        print(f"[Pipeline] Extraction failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Semantic extraction failed: {str(e)}")
+
+    # Handle Question Extraction
+    if auto_extract_question and not question.strip():
+        question = extraction_data.get("question_text", "")
+    
+    if not question.strip():
+        raise HTTPException(
+            status_code=400, 
+            detail="No question provided or detected. Please type the question."
+        )
+
+    # Prepare response structure based on the new extraction output
     pipeline_result = {
         "question": question,
-        "segmentation": None,
+        "extraction_status": "loaded_from_cache" if extraction_data.get("from_cache") else "api_call",
+        "segmentation": {
+            "regions": extraction_data.get("diagram_regions", []),
+            "has_diagram": extraction_data.get("has_diagram", False),
+            "has_theory_text": extraction_data.get("has_theory_text", False),
+            "page_summary": extraction_data.get("page_summary", "")
+        },
         "crops": {},
-        "ocr_text": None,
-        "diagram_json": None,
+        "ocr_text": {
+            "theory_text": extraction_data.get("theory_text", ""),
+            "diagram_labels": extraction_data.get("diagram_labels", [])
+        },
+        "diagram_json": extraction_data.get("diagram_json"),
         "evaluation": {
             "theory": None,
             "diagram_bonus": None,
@@ -103,94 +140,37 @@ async def evaluate_answer(
         }
     }
 
-    # ── Step 1: Page Segmentation ──────────────────────────────
-    print("[Pipeline] Step 1: Page Segmentation...")
-    try:
-        segmentation_data = segment_page(client, pil_image)
-        pipeline_result["segmentation"] = segmentation_data
-    except Exception as e:
-        print(f"[Pipeline] Segmentation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Page segmentation failed: {str(e)}")
+    # ── Step 2: Local Cropping for UI Visuals ──────────────────────────────
+    print("[Pipeline] Step 2: Local region cropping...")
+    regions = pipeline_result["segmentation"]["regions"]
+    has_diagram = pipeline_result["segmentation"]["has_diagram"]
+    student_text = pipeline_result["ocr_text"]["theory_text"]
 
-    regions = segmentation_data.get("regions", [])
-    has_diagram = segmentation_data.get("has_diagram", False)
-    has_text = segmentation_data.get("has_theory_text", False)
-
-    # ── Step 2: Crop Regions ───────────────────────────────────
-    print("[Pipeline] Step 2: Cropping regions...")
-    
-    theory_crop = merge_regions(pil_image, regions, "theory_text")
-    diagram_crop = merge_regions(pil_image, regions, "diagram")
-    
-    # Convert crops to base64 for frontend visualization
-    if theory_crop:
-        pipeline_result["crops"]["theory_crop"] = image_to_base64(theory_crop)
-    if diagram_crop:
+    # Simple local cropping based on returned bounding boxes
+    diagram_boxes = [r for r in regions if r.get("region_type") == "diagram"]
+    if diagram_boxes:
+        diagram_crop = crop_region_by_bbox(pil_image, diagram_boxes[0].get("box_2d"))
         pipeline_result["crops"]["diagram_crop"] = image_to_base64(diagram_crop)
-    
-    # Collect label and connector regions for visualization
-    label_regions = [r for r in regions if r.get("region_type") == "diagram_label"]
-    connector_regions = [r for r in regions if r.get("region_type") == "connector"]
-    pipeline_result["crops"]["label_regions"] = label_regions
-    pipeline_result["crops"]["connector_regions"] = connector_regions
 
-    # ── Step 3: Question Extraction (if needed) ────────────────
-    if auto_extract_question and not question.strip():
-        print("[Pipeline] Step 3: Auto-extracting question...")
-        try:
-            # Try to use question region if detected, else use full page
-            question_crop = merge_regions(pil_image, regions, "question_text")
-            source_image = question_crop if question_crop else pil_image
-            
-            q_result = extract_question(client, source_image)
-            question = q_result.get("question_text", "")
-            pipeline_result["question"] = question
-            pipeline_result["extracted_question"] = q_result
-        except Exception as e:
-            print(f"[Pipeline] Question extraction failed: {e}")
-    
-    if not question.strip():
-        raise HTTPException(
-            status_code=400, 
-            detail="No question provided. Please type the question or enable auto-extraction."
-        )
+    theory_boxes = [r for r in regions if r.get("region_type") == "theory_text"]
+    if theory_boxes:
+        theory_crop = crop_region_by_bbox(pil_image, theory_boxes[0].get("box_2d"))
+        pipeline_result["crops"]["theory_crop"] = image_to_base64(theory_crop)
 
-    # ── Step 4: OCR Text Extraction ────────────────────────────
-    ocr_data = {"theory_text": "", "diagram_labels": []}
-    
-    if theory_crop:
-        print("[Pipeline] Step 4: OCR extraction on theory text...")
-        try:
-            ocr_data = extract_text(client, theory_crop)
-            pipeline_result["ocr_text"] = ocr_data
-        except Exception as e:
-            print(f"[Pipeline] OCR failed: {e}")
-            pipeline_result["ocr_text"] = {"theory_text": "", "diagram_labels": [], "error": str(e)}
-    elif not has_diagram:
-        # No text region detected and no diagram — try OCR on full page
-        print("[Pipeline] Step 4: No text region detected, trying full page OCR...")
-        try:
-            ocr_data = extract_text(client, pil_image)
-            pipeline_result["ocr_text"] = ocr_data
-        except Exception as e:
-            print(f"[Pipeline] Full page OCR failed: {e}")
-
-    student_text = ocr_data.get("theory_text", "")
-
-    # ── Step 5: Theory Evaluation ──────────────────────────────
+    # ── Step 3: Text-based Theory Evaluation ──────────────────────────────
     theory_eval_data = None
     if student_text.strip():
-        print("[Pipeline] Step 5: Theory evaluation...")
+        print("[Pipeline] Step 3: Theory evaluation (Text LLM)...")
         try:
             theory_eval_data = evaluate_theory(client, question, student_text, max_marks=max_marks)
             pipeline_result["evaluation"]["theory"] = theory_eval_data
         except Exception as e:
-            print(f"[Pipeline] Theory evaluation failed after retries: {e}")
+            print(f"[Pipeline] Theory evaluation failed: {e}")
             from pipeline.retry import make_eval_failure
             theory_eval_data = make_eval_failure("gemini_service_error", e)
             pipeline_result["evaluation"]["theory"] = theory_eval_data
     else:
-        print("[Pipeline] Step 5: Skipped — no theory text extracted")
+        print("[Pipeline] Step 3: Skipped — no theory text extracted")
         theory_eval_data = {
             "score": 0,
             "max_score": max_marks,
@@ -203,24 +183,14 @@ async def evaluate_answer(
         }
         pipeline_result["evaluation"]["theory"] = theory_eval_data
 
-    # ── Step 6: Diagram Evaluation (if diagram present) ────────
-    diagram_json = None
+    # ── Step 4: Text-based Diagram Evaluation ──────────────────────────────
     diagram_bonus_data = None
+    diagram_json = pipeline_result["diagram_json"]
     
-    if has_diagram and diagram_crop:
-        print("[Pipeline] Step 6: Diagram evaluation + bonus...")
-        
-        # Full semantic decomposition
+    if has_diagram and diagram_json:
+        print("[Pipeline] Step 4: Diagram evaluation (Text LLM)...")
         try:
-            diagram_json = evaluate_diagram(client, question, diagram_crop)
-            pipeline_result["diagram_json"] = diagram_json
-        except Exception as e:
-            print(f"[Pipeline] Diagram evaluation failed: {e}")
-            pipeline_result["diagram_json"] = {"error": str(e)}
-        
-        # Bonus calculation
-        try:
-            diagram_bonus_data = calculate_diagram_bonus(client, question, diagram_crop)
+            diagram_bonus_data = calculate_diagram_bonus(client, question, diagram_json)
             pipeline_result["evaluation"]["diagram_bonus"] = diagram_bonus_data
         except Exception as e:
             print(f"[Pipeline] Diagram bonus calculation failed: {e}")
@@ -232,211 +202,18 @@ async def evaluate_answer(
                 "feedback": [f"Bonus calculation failed: {str(e)}"]
             }
             pipeline_result["evaluation"]["diagram_bonus"] = diagram_bonus_data
-        
-        # GroundingDINO localization for diagram structure overlays
-        if diagram_json and "structures" in diagram_json:
-            structure_names = [s.get("name") for s in diagram_json.get("structures", []) if s.get("name")]
-            if structure_names:
-                print(f"[Pipeline] Localizing diagram structures: {structure_names}")
-                try:
-                    bounding_boxes = localize_structures(diagram_crop, structure_names)
-                    for struct in diagram_json.get("structures", []):
-                        struct_name = struct.get("name")
-                        if struct_name in bounding_boxes:
-                            xmin, ymin, xmax, ymax = bounding_boxes[struct_name]
-                            w, h = diagram_crop.size
-                            struct["box_2d"] = [
-                                int((ymin / h) * 1000),
-                                int((xmin / w) * 1000),
-                                int((ymax / h) * 1000),
-                                int((xmax / w) * 1000)
-                            ]
-                except Exception as e:
-                    print(f"[Pipeline] GroundingDINO localization failed: {e}")
-        
-        # Generate diagram overlay visualization
-        if diagram_json and diagram_crop:
-            vis_overlay = _generate_diagram_overlay(diagram_crop, diagram_json)
-            pipeline_result["crops"]["diagram_overlay"] = image_to_base64(vis_overlay)
-    else:
-        print("[Pipeline] Step 6: Skipped — no diagram detected")
 
-    # ── Step 7: Score Fusion ───────────────────────────────────
-    print("[Pipeline] Step 7: Score fusion...")
+    # ── Step 5: Score Fusion ──────────────────────────────────────────────
+    print("[Pipeline] Step 5: Score fusion...")
+    theory_score = theory_eval_data.get("score", 0) if theory_eval_data else 0
+    bonus = diagram_bonus_data.get("bonus_awarded", 0) if diagram_bonus_data else 0
+    max_bonus = diagram_bonus_data.get("max_bonus", 2) if diagram_bonus_data else 2
     
-    if theory_eval_data and theory_eval_data.get("status") == "evaluation_failed":
-        print("[Pipeline] Step 7: Skipping score fusion due to theory evaluation failure")
-        fusion_data = {
-            "status": "evaluation_failed",
-            "summary": "Final score cannot be calculated because theory evaluation failed due to a service error.",
-            "final_score": None,
-            "max_possible": max_marks + 2
-        }
-    else:
-        theory_score = theory_eval_data.get("score", 0) if theory_eval_data else 0
-        bonus = diagram_bonus_data.get("bonus_awarded", 0) if diagram_bonus_data else 0
-        
-        fusion_data = combine_scores(
-            theory_score=theory_score,
-            max_theory=max_marks,
-            diagram_bonus=bonus,
-            max_bonus=2,
-            has_diagram=has_diagram
-        )
-        print(f"[Pipeline] ✅ Complete — {fusion_data['summary']}")
+    fusion_result = combine_scores(theory_score, max_marks, bonus, max_bonus)
+    pipeline_result["evaluation"]["score_fusion"] = fusion_result
 
-    pipeline_result["evaluation"]["score_fusion"] = fusion_data
-    
+    print("[Pipeline] Success. Returning final response.")
     return pipeline_result
-
-
-def _generate_diagram_overlay(diagram_image: Image.Image, diagram_data: dict) -> Image.Image:
-    """Generate a transparent overlay with bounding boxes for diagram structures."""
-    overlay = Image.new('RGBA', diagram_image.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
-    
-    colors = [
-        (255, 99, 132),   # Red/Pink
-        (54, 162, 235),   # Blue
-        (255, 206, 86),   # Yellow
-        (75, 192, 192),   # Teal
-        (153, 102, 255),  # Purple
-        (255, 159, 64)    # Orange
-    ]
-
-    for idx, struct in enumerate(diagram_data.get("structures", [])):
-        if not struct.get("box_2d"):
-            continue
-            
-        ymin_n, xmin_n, ymax_n, xmax_n = struct["box_2d"]
-        w, h = diagram_image.size
-        
-        xmin = int((xmin_n / 1000) * w)
-        ymin = int((ymin_n / 1000) * h)
-        xmax = int((xmax_n / 1000) * w)
-        ymax = int((ymax_n / 1000) * h)
-        
-        r, g, b = colors[idx % len(colors)]
-        fill_color = (r, g, b, 70)
-        outline_color = (r, g, b, 200)
-        
-        draw.rounded_rectangle(
-            [xmin, ymin, xmax, ymax],
-            radius=8,
-            fill=fill_color,
-            outline=outline_color,
-            width=2
-        )
-    
-    return overlay
-
-
-# ============================================================
-# LEGACY ENDPOINT — Diagram-Only Analysis (backward compat)
-# ============================================================
-
-@app.post("/analyze")
-async def analyze_diagram(file: UploadFile = File(...)):
-    if not client:
-        raise HTTPException(status_code=500, detail="Gemini API Key is missing or invalid.")
-
-    media_type = file.content_type
-    if media_type == "image/jpg":
-        media_type = "image/jpeg"
-    if media_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type.")
-
-    image_bytes = await file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Empty file")
-
-    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                pil_image,
-                DIAGRAM_EXTRACTION_PROMPT
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=DiagramAnalysis,
-                temperature=0.2
-            )
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini API call failed: {str(e)}")
-
-    if not response.text:
-        raise HTTPException(status_code=500, detail="Empty response from Gemini")
-
-    try:
-        diagram_data = json.loads(response.text)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to parse JSON from Gemini")
-
-    # Step 2: Localization via GroundingDINO
-    structure_names = [s.get("name") for s in diagram_data.get("structures", []) if s.get("name")]
-    
-    print(f"Localizing structures: {structure_names}")
-    try:
-        bounding_boxes = localize_structures(pil_image, structure_names)
-    except Exception as e:
-        print(f"Localization failed: {e}")
-        bounding_boxes = {}
-
-    # Generate Visualization Overlay
-    vis_image = pil_image.copy().convert("RGBA")
-    overlay = Image.new('RGBA', vis_image.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
-    
-    colors = [
-        (255, 99, 132),  # Red/Pink
-        (54, 162, 235),  # Blue
-        (255, 206, 86),  # Yellow
-        (75, 192, 192),  # Teal
-        (153, 102, 255), # Purple
-        (255, 159, 64)   # Orange
-    ]
-
-    for idx, struct in enumerate(diagram_data.get("structures", [])):
-        struct_name = struct.get("name")
-        if struct_name in bounding_boxes:
-            xmin, ymin, xmax, ymax = bounding_boxes[struct_name]
-            
-            width, height = vis_image.size
-            struct["box_2d"] = [
-                int((ymin / height) * 1000),
-                int((xmin / width) * 1000),
-                int((ymax / height) * 1000),
-                int((xmax / width) * 1000)
-            ]
-
-            r, g, b = colors[idx % len(colors)]
-            fill_color = (r, g, b, 70)
-            outline_color = (r, g, b, 200)
-            
-            draw.rounded_rectangle(
-                [xmin, ymin, xmax, ymax], 
-                radius=8, 
-                fill=fill_color, 
-                outline=outline_color, 
-                width=2
-            )
-
-    buffered = io.BytesIO()
-    overlay.save(buffered, format="PNG")
-    vis_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    
-    return {
-        "diagram_json": diagram_data,
-        "visualization_image": f"data:image/png;base64,{vis_base64}"
-    }
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn

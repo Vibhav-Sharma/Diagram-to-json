@@ -60,7 +60,7 @@ STUDENT'S ANSWER (extracted via OCR from handwritten text):
 """
     
     response = client.models.generate_content(
-        model="gemini-2.0-flash", # Upgraded for stability
+        model="gemini-2.5-flash", # Upgraded for stability
         contents=[
             filled_prompt,
             evaluation_input

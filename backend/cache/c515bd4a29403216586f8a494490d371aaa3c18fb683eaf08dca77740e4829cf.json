@@ -1,0 +1,171 @@
+{
+  "question_text": "",
+  "theory_text": "Xylem\n\u2192 Transports water and minerals from The root to the plant.\n\u2192 Unidirectional flows.\n\u2192 Mostly dead\nPhloem\n\u2192 Transports (food) photosynthetic material through the plant.\n\u2192 Bidirectional flows.\n\u2192 Mostly composed of living cells",
+  "diagram_regions": [
+    {
+      "region_type": "question_text",
+      "box_2d": [
+        10,
+        30,
+        100,
+        110
+      ],
+      "confidence": 0.95,
+      "description": "Question number II"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        20,
+        280,
+        80,
+        390
+      ],
+      "confidence": 0.98,
+      "description": "Heading: Xylem"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        20,
+        570,
+        80,
+        690
+      ],
+      "confidence": 0.98,
+      "description": "Heading: Phloem"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        80,
+        90,
+        255,
+        505
+      ],
+      "confidence": 0.97,
+      "description": "Xylem theory points 1 and 2"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        780,
+        90,
+        840,
+        360
+      ],
+      "confidence": 0.97,
+      "description": "Xylem theory point 3"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        80,
+        490,
+        255,
+        910
+      ],
+      "confidence": 0.97,
+      "description": "Phloem theory points 1 and 2"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        780,
+        490,
+        840,
+        960
+      ],
+      "confidence": 0.97,
+      "description": "Phloem theory point 3"
+    },
+    {
+      "region_type": "diagram",
+      "box_2d": [
+        280,
+        240,
+        760,
+        460
+      ],
+      "confidence": 0.95,
+      "description": "Diagram illustrating unidirectional flow in Xylem"
+    },
+    {
+      "region_type": "diagram",
+      "box_2d": [
+        280,
+        590,
+        760,
+        810
+      ],
+      "confidence": 0.95,
+      "description": "Diagram illustrating bidirectional flow in Phloem"
+    },
+    {
+      "region_type": "diagram_label",
+      "box_2d": [
+        240,
+        90,
+        290,
+        190
+      ],
+      "confidence": 0.96,
+      "description": "Label 'Root'"
+    },
+    {
+      "region_type": "connector",
+      "box_2d": [
+        250,
+        180,
+        280,
+        240
+      ],
+      "confidence": 0.9,
+      "description": "Arrow from 'Root'"
+    },
+    {
+      "region_type": "annotation",
+      "box_2d": [
+        40,
+        780,
+        90,
+        860
+      ],
+      "confidence": 0.94,
+      "description": "Annotation '(food)'"
+    }
+  ],
+  "diagram_labels": [
+    "Root"
+  ],
+  "annotations": [
+    "(food)"
+  ],
+  "connectors": [
+    "Arrow from 'Root' to Xylem diagram",
+    "Upward arrows within Xylem diagram",
+    "Bidirectional arrows within Phloem diagram"
+  ],
+  "diagram_json": {
+    "figure": "Xylem and Phloem transport comparison",
+    "labels": [
+      "Root"
+    ],
+    "relationships": [
+      "Xylem transports water and minerals from the root to the plant.",
+      "Xylem flow is unidirectional.",
+      "Xylem is mostly dead.",
+      "Phloem transports photosynthetic material (food) throughout the plant.",
+      "Phloem flow is bidirectional.",
+      "Phloem is mostly composed of living cells."
+    ],
+    "connectors": [
+      "Arrow from 'Root' indicating origin of flow in Xylem",
+      "Upward arrows within Xylem diagram indicating unidirectional flow",
+      "Bidirectional arrows within Phloem diagram indicating bidirectional flow"
+    ]
+  },
+  "has_diagram": true,
+  "has_theory_text": true,
+  "page_summary": "The page presents a comparison between Xylem and Phloem, detailing their functions, flow direction, and cell composition. It includes two diagrams illustrating unidirectional flow in Xylem and bidirectional flow in Phloem."
+}

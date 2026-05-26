@@ -1,0 +1,147 @@
+{
+  "question_text": "Q36 (III) Reverberation of sound",
+  "theory_text": "Reverberation of sound is when sound reflects and reflected sound overlap. This effect is highly undesirable in speeches and in halls and concerts so to finish reverberation curved sound board is placed behind the stage to make sound reach every where evenly without reverberation. Also an cielinge and in some places sound at absorbing materials are placed to reduce the reverberation by absorbing sound.",
+  "diagram_regions": [
+    {
+      "region_type": "question_text",
+      "box_2d": [
+        185,
+        95,
+        230,
+        435
+      ],
+      "confidence": 0.95,
+      "description": "Question text about reverberation"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        215,
+        175,
+        370,
+        925
+      ],
+      "confidence": 0.98,
+      "description": "Main theory text explaining reverberation and its control"
+    },
+    {
+      "region_type": "diagram",
+      "box_2d": [
+        340,
+        180,
+        515,
+        470
+      ],
+      "confidence": 0.97,
+      "description": "Diagram of a curved soundboard reflecting sound"
+    },
+    {
+      "region_type": "diagram_label",
+      "box_2d": [
+        450,
+        90,
+        510,
+        195
+      ],
+      "confidence": 0.92,
+      "description": "Label for the curved soundboard"
+    },
+    {
+      "region_type": "connector",
+      "box_2d": [
+        365,
+        455,
+        460,
+        495
+      ],
+      "confidence": 0.9,
+      "description": "Bracket connecting diagram to label"
+    },
+    {
+      "region_type": "diagram_label",
+      "box_2d": [
+        375,
+        490,
+        445,
+        790
+      ],
+      "confidence": 0.93,
+      "description": "Label 'evenly distributed sound'"
+    },
+    {
+      "region_type": "theory_text",
+      "box_2d": [
+        505,
+        140,
+        630,
+        970
+      ],
+      "confidence": 0.96,
+      "description": "Additional theory text about sound absorbing materials"
+    },
+    {
+      "region_type": "diagram",
+      "box_2d": [
+        620,
+        395,
+        840,
+        710
+      ],
+      "confidence": 0.96,
+      "description": "Diagram of sound absorbing material on a ceiling with an audience"
+    },
+    {
+      "region_type": "diagram_label",
+      "box_2d": [
+        625,
+        725,
+        715,
+        980
+      ],
+      "confidence": 0.94,
+      "description": "Label 'Sound absorbing material'"
+    },
+    {
+      "region_type": "connector",
+      "box_2d": [
+        630,
+        700,
+        680,
+        790
+      ],
+      "confidence": 0.88,
+      "description": "Arrow pointing from diagram to label"
+    }
+  ],
+  "diagram_labels": [
+    "Curved Soundboard",
+    "evenly distributed sound",
+    "Sound absorbing material"
+  ],
+  "annotations": [],
+  "connectors": [
+    "Arrows showing sound reflection from curved soundboard",
+    "Bracket indicating even sound distribution",
+    "Arrows showing sound waves interacting with ceiling material"
+  ],
+  "diagram_json": {
+    "figure": "Methods for controlling reverberation in a hall",
+    "labels": [
+      "Curved Soundboard",
+      "evenly distributed sound",
+      "Sound absorbing material"
+    ],
+    "relationships": [
+      "Curved soundboard reflects sound waves to achieve even distribution",
+      "Sound absorbing material on the ceiling absorbs sound waves to reduce reverberation"
+    ],
+    "connectors": [
+      "Arrows illustrate the path of sound waves reflecting off a curved surface",
+      "A bracket connects the curved soundboard diagram to the concept of evenly distributed sound",
+      "Arrows depict sound waves hitting and being absorbed by ceiling material"
+    ]
+  },
+  "has_diagram": true,
+  "has_theory_text": true,
+  "page_summary": "The page presents an answer to a question about reverberation of sound. It includes a detailed handwritten explanation and two diagrams illustrating methods to control reverberation: one showing a curved soundboard for even sound distribution, and another depicting sound-absorbing material on a ceiling to reduce echoes."
+}
